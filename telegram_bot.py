@@ -25,6 +25,9 @@ STATS_FILE = os.path.join(DATA_DIR, 'method_stats.json')
 MAX_DRAWS_FOR_LSTM = 300
 WINDOW_FOR_YOUR_METHOD = 50
 
+# Глобальный кэш
+_data_cache = None
+
 # ===================== ПРОВЕРКА И НОРМАЛИЗАЦИЯ ФАЙЛА =====================
 def ensure_data_file():
     if not os.path.exists(DATA_FILE):
@@ -66,6 +69,10 @@ def save_stats(stats):
         json.dump(stats, f)
 
 def load_all_data():
+    global _data_cache
+    if _data_cache is not None:
+        return _data_cache
+    
     if not os.path.exists(DATA_FILE):
         return np.array([])
     normalize_csv_format()
@@ -84,7 +91,8 @@ def load_all_data():
                 i += 1
         else:
             break
-    return np.array(data)
+    _data_cache = np.array(data)
+    return _data_cache
 
 def load_data_for_lstm():
     data = load_all_data()
@@ -249,7 +257,7 @@ def markov_method(data):
         combo.append(next_num)
     return combo
 
-# ===================== ДОБАВЛЕНИЕ ТИРАЖА (С ОТЛАДКОЙ) =====================
+# ===================== ДОБАВЛЕНИЕ ТИРАЖА =====================
 def add_draw_to_file(numbers):
     print("=== НАЧАЛО ДОБАВЛЕНИЯ ТИРАЖА ===")
     print(f"Числа: {numbers}")
@@ -292,6 +300,10 @@ def add_draw_to_file(numbers):
             f.writelines(lines)
         print(f"✅ Тираж {new_num} успешно сохранён в файл")
         
+        # Очищаем кэш
+        global _data_cache
+        _data_cache = None
+        
         return new_num
     except Exception as e:
         print(f"❌ ОШИБКА: {e}")
@@ -308,7 +320,8 @@ async def start(update: Update, context):
         "/del - удалить последний тираж\n"
         "/history - последние 5 тиражей\n"
         "/stats - статистика методов\n"
-        "/upload - загрузить файл lottery.csv\n\n"
+        "/upload - загрузить файл lottery.csv\n"
+        "/refresh - обновить данные\n\n"
         f"📊 Твой метод использует последние {WINDOW_FOR_YOUR_METHOD} тиражей\n"
         f"🧠 LSTM обучен на последних {MAX_DRAWS_FOR_LSTM} тиражах",
         parse_mode="Markdown"
@@ -429,8 +442,13 @@ async def add(update: Update, context):
     await update.message.reply_text("📝 Введите 6 чисел через пробел, например:\n`2 3 4 3 5 4`", parse_mode="Markdown")
     context.user_data['waiting'] = True
 
+async def refresh(update: Update, context):
+    global _data_cache
+    _data_cache = None
+    load_all_data()
+    await update.message.reply_text("✅ Данные обновлены!")
+
 async def delete_last(update: Update, context):
-    """Удаляет последний тираж из файла"""
     if not os.path.exists(DATA_FILE):
         await update.message.reply_text("❌ Файл с тиражами не найден")
         return
@@ -455,6 +473,10 @@ async def delete_last(update: Update, context):
     
     with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
         f.writelines(lines)
+    
+    # Очищаем кэш
+    global _data_cache
+    _data_cache = None
     
     await update.message.reply_text(f"✅ Удалён тираж:\n`{deleted_line}`", parse_mode="Markdown")
 
@@ -502,6 +524,8 @@ async def handle_document(update: Update, context):
         file = await document.get_file()
         await file.download_to_drive(DATA_FILE)
         normalize_csv_format()
+        global _data_cache
+        _data_cache = None
         await update.message.reply_text(f"✅ Файл lottery.csv загружен и нормализован!\n📁 Путь: {DATA_FILE}")
     else:
         await update.message.reply_text(f"❌ Ожидался файл lottery.csv, получен {document.file_name}")
@@ -553,6 +577,7 @@ def main():
     app.add_handler(CommandHandler("predict", predict))
     app.add_handler(CommandHandler("history", history))
     app.add_handler(CommandHandler("add", add))
+    app.add_handler(CommandHandler("refresh", refresh))
     app.add_handler(CommandHandler("del", delete_last))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("upload", upload))
