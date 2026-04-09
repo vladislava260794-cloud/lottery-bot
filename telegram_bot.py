@@ -21,21 +21,32 @@ DATA_FILE = os.path.join(DATA_DIR, 'lottery.csv')
 TOKEN = "8235101337:AAE07TjdyK_KoJQRVbc9nuSgYyPxGt638S8"
 
 STATS_FILE = os.path.join(DATA_DIR, 'method_stats.json')
-MAX_DRAWS_FOR_LSTM = 300
+MAX_DRAWS_FOR_LSTM = 300  # LSTM на 300 тиражей
 WINDOW_FOR_YOUR_METHOD = 50
 
-# ===================== ПРОВЕРКА ФАЙЛА =====================
+# ===================== ПРОВЕРКА И НОРМАЛИЗАЦИЯ ФАЙЛА =====================
 def ensure_data_file():
     if not os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
             f.write("Номер тиража,Дата,Шары\n")
         print("Создан пустой файл lottery.csv")
-    else:
-        print(f"Файл найден: {DATA_FILE}")
+
+def normalize_csv_format():
+    if not os.path.exists(DATA_FILE):
+        return
+    with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
+        content = f.read()
+    # Нормализуем формат
+    content = re.sub(r',\s*', ', ', content)
+    content = re.sub(r',(\d)', r', \1', content)
+    content = re.sub(r'  ', ' ', content)
+    with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
+        f.write(content)
 
 ensure_data_file()
+normalize_csv_format()
 
-# ===================== ОСТАЛЬНЫЕ ФУНКЦИИ =====================
+# ===================== ОСНОВНЫЕ ФУНКЦИИ =====================
 def load_stats():
     if os.path.exists(STATS_FILE):
         with open(STATS_FILE, 'r') as f:
@@ -57,6 +68,7 @@ def save_stats(stats):
 def load_all_data():
     if not os.path.exists(DATA_FILE):
         return np.array([])
+    normalize_csv_format()
     with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
         text = f.read()
     all_numbers = [int(n) for n in re.findall(r'\d+', text)]
@@ -83,6 +95,7 @@ def load_data_for_lstm():
 def format_numbers(arr):
     return [int(x) for x in arr]
 
+# ===================== LSTM =====================
 def lstm_method(data):
     if len(data) < 50:
         return [3, 3, 3, 4, 4, 4]
@@ -121,6 +134,7 @@ def lstm_method(data):
     pred = model.predict(X_last, verbose=0).reshape(6, 6)
     return [int(np.argmax(pred[i]) + 1) for i in range(6)]
 
+# ===================== ТВОЙ МЕТОД =====================
 def your_full_method(data):
     if len(data) > WINDOW_FOR_YOUR_METHOD:
         data = data[-WINDOW_FOR_YOUR_METHOD:]
@@ -269,21 +283,23 @@ def add_draw_to_file(numbers):
     
     return new_num
 
+# ===================== КОМАНДЫ БОТА =====================
 async def start(update: Update, context):
     await update.message.reply_text(
         "🎰 *Лотерейный прогнозист* 🎰\n\n"
         "Команды:\n"
-        "/predict - прогноз (5 методов)\n"
+        "/predict - прогноз (5 методов + LSTM)\n"
         "/add - добавить тираж\n"
         "/history - последние 5 тиражей\n"
         "/stats - статистика методов\n"
         "/upload - загрузить файл lottery.csv\n\n"
-        f"📊 Твой метод использует последние {WINDOW_FOR_YOUR_METHOD} тиражей",
+        f"📊 Твой метод использует последние {WINDOW_FOR_YOUR_METHOD} тиражей\n"
+        f"🧠 LSTM обучен на последних {MAX_DRAWS_FOR_LSTM} тиражах",
         parse_mode="Markdown"
     )
 
 async def predict(update: Update, context):
-    msg = await update.message.reply_text("🔄 Считаю прогнозы...")
+    msg = await update.message.reply_text("🔄 Считаю прогнозы (LSTM может занять 20-30 секунд)...")
     
     all_data = load_all_data()
     if len(all_data) < 10:
@@ -355,16 +371,13 @@ async def predict(update: Update, context):
     
     msg_text += f"\n📈 Всего в базе: {len(all_data)} тиражей"
     msg_text += f"\n📊 Твой метод использует последние {WINDOW_FOR_YOUR_METHOD} тиражей"
+    msg_text += f"\n🧠 LSTM обучен на последних {MAX_DRAWS_FOR_LSTM} тиражах"
     
     await msg.edit_text(msg_text, parse_mode="Markdown")
 
 async def history(update: Update, context):
     data = load_all_data()
     if len(data) == 0:
-        await update.message.reply_text("❌ Нет данных")
-        return
-    
-    if not os.path.exists(DATA_FILE):
         await update.message.reply_text("❌ Нет данных")
         return
     
@@ -443,11 +456,8 @@ async def handle_document(update: Update, context):
         await update.message.reply_text("🔄 Загружаю файл...")
         file = await document.get_file()
         await file.download_to_drive(DATA_FILE)
-        await update.message.reply_text(f"✅ Файл lottery.csv загружен!\n📁 Путь: {DATA_FILE}")
-        # Проверяем, что загрузилось
-        with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
-            first_lines = f.readlines()[:5]
-        await update.message.reply_text(f"Первые строки файла:\n{''.join(first_lines)}")
+        normalize_csv_format()
+        await update.message.reply_text(f"✅ Файл lottery.csv загружен и нормализован!\n📁 Путь: {DATA_FILE}")
     else:
         await update.message.reply_text(f"❌ Ожидался файл lottery.csv, получен {document.file_name}")
 
@@ -504,6 +514,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print(f"✅ Бот запущен!")
     print(f"📊 Твой метод использует последние {WINDOW_FOR_YOUR_METHOD} тиражей")
+    print(f"🧠 LSTM обучен на последних {MAX_DRAWS_FOR_LSTM} тиражах")
     print(f"📁 Файл данных: {DATA_FILE}")
     app.run_polling()
 
