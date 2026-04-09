@@ -14,14 +14,12 @@ from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.optimizers import Adam
 
-# ===================== НАСТРОЙКА ДЛЯ RAILWAY VOLUME =====================
-DATA_DIR = '/app/data'
-os.makedirs(DATA_DIR, exist_ok=True)
-DATA_FILE = os.path.join(DATA_DIR, 'lottery.csv')
+# ===================== НАСТРОЙКА =====================
+DATA_FILE = 'lottery.csv'  # Файл в корне проекта
 
 TOKEN = "8235101337:AAE07TjdyK_KoJQRVbc9nuSgYyPxGt638S8"
 
-STATS_FILE = os.path.join(DATA_DIR, 'method_stats.json')
+STATS_FILE = 'method_stats.json'
 MAX_DRAWS_FOR_LSTM = 300
 WINDOW_FOR_YOUR_METHOD = 50
 
@@ -40,6 +38,7 @@ def normalize_csv_format():
         return
     with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
         content = f.read()
+    # Нормализуем формат
     content = re.sub(r',\s*', ', ', content)
     content = re.sub(r',(\d)', r', \1', content)
     content = re.sub(r'  ', ' ', content)
@@ -474,7 +473,6 @@ async def delete_last(update: Update, context):
     with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
         f.writelines(lines)
     
-    # Очищаем кэш
     global _data_cache
     _data_cache = None
     
