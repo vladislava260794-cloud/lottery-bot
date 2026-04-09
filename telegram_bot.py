@@ -24,7 +24,18 @@ STATS_FILE = os.path.join(DATA_DIR, 'method_stats.json')
 MAX_DRAWS_FOR_LSTM = 300
 WINDOW_FOR_YOUR_METHOD = 50
 
-# ===================== ОСТАЛЬНОЙ КОД (без изменений) =====================
+# ===================== ПРОВЕРКА ФАЙЛА =====================
+def ensure_data_file():
+    if not os.path.exists(DATA_FILE):
+        with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
+            f.write("Номер тиража,Дата,Шары\n")
+        print("Создан пустой файл lottery.csv")
+    else:
+        print(f"Файл найден: {DATA_FILE}")
+
+ensure_data_file()
+
+# ===================== ОСТАЛЬНЫЕ ФУНКЦИИ =====================
 def load_stats():
     if os.path.exists(STATS_FILE):
         with open(STATS_FILE, 'r') as f:
@@ -225,7 +236,6 @@ def markov_method(data):
     return combo
 
 def add_draw_to_file(numbers):
-    # Убедимся, что файл существует
     if not os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
             f.write("Номер тиража,Дата,Шары\n")
@@ -249,7 +259,6 @@ def add_draw_to_file(numbers):
         new_line += str(n) + (', +' if i < 5 else '')
     new_line += '\n'
     
-    # Добавляем перед lucky-numbers.ru если есть, иначе в конец
     if 'lucky-numbers.ru' in ''.join(lines):
         lines.insert(-1, new_line)
     else:
@@ -267,7 +276,8 @@ async def start(update: Update, context):
         "/predict - прогноз (5 методов)\n"
         "/add - добавить тираж\n"
         "/history - последние 5 тиражей\n"
-        "/stats - статистика методов\n\n"
+        "/stats - статистика методов\n"
+        "/upload - загрузить файл lottery.csv\n\n"
         f"📊 Твой метод использует последние {WINDOW_FOR_YOUR_METHOD} тиражей",
         parse_mode="Markdown"
     )
@@ -424,6 +434,23 @@ async def stats(update: Update, context):
     
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+async def upload(update: Update, context):
+    await update.message.reply_text("📁 Отправьте файл lottery.csv (как документ)")
+
+async def handle_document(update: Update, context):
+    document = update.message.document
+    if document.file_name == 'lottery.csv':
+        await update.message.reply_text("🔄 Загружаю файл...")
+        file = await document.get_file()
+        await file.download_to_drive(DATA_FILE)
+        await update.message.reply_text(f"✅ Файл lottery.csv загружен!\n📁 Путь: {DATA_FILE}")
+        # Проверяем, что загрузилось
+        with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
+            first_lines = f.readlines()[:5]
+        await update.message.reply_text(f"Первые строки файла:\n{''.join(first_lines)}")
+    else:
+        await update.message.reply_text(f"❌ Ожидался файл lottery.csv, получен {document.file_name}")
+
 async def handle_message(update: Update, context):
     if context.user_data.get('waiting'):
         try:
@@ -472,9 +499,12 @@ def main():
     app.add_handler(CommandHandler("history", history))
     app.add_handler(CommandHandler("add", add))
     app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("upload", upload))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print(f"✅ Бот запущен!")
     print(f"📊 Твой метод использует последние {WINDOW_FOR_YOUR_METHOD} тиражей")
+    print(f"📁 Файл данных: {DATA_FILE}")
     app.run_polling()
 
 if __name__ == "__main__":
