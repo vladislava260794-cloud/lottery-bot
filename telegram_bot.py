@@ -4,6 +4,7 @@ import numpy as np
 from collections import Counter, defaultdict
 from datetime import datetime
 import json
+import traceback
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from sklearn.linear_model import LogisticRegression
@@ -248,39 +249,54 @@ def markov_method(data):
         combo.append(next_num)
     return combo
 
+# ===================== ДОБАВЛЕНИЕ ТИРАЖА (С ОТЛАДКОЙ) =====================
 def add_draw_to_file(numbers):
-    if not os.path.exists(DATA_FILE):
+    print("=== НАЧАЛО ДОБАВЛЕНИЯ ТИРАЖА ===")
+    print(f"Числа: {numbers}")
+    print(f"Путь к файлу: {DATA_FILE}")
+    
+    try:
+        if not os.path.exists(DATA_FILE):
+            print("Файл не существует, создаю новый...")
+            with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
+                f.write("Номер тиража,Дата,Шары\n")
+        
+        with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
+            lines = f.readlines()
+        print(f"Прочитано строк: {len(lines)}")
+        
+        max_num = 0
+        for line in lines:
+            if line.strip() and not line.startswith('lucky') and not line.startswith('Номер'):
+                match = re.match(r'(\d+)', line.strip())
+                if match:
+                    num = int(match.group(1))
+                    if num > max_num:
+                        max_num = num
+        print(f"Максимальный номер тиража: {max_num}")
+        
+        new_num = max_num + 1
+        now = datetime.now()
+        new_line = f'{new_num},{now.strftime("%d.%m.%y")}, {now.strftime("%H:%M")}, '
+        for i, n in enumerate(numbers):
+            new_line += str(n) + (', +' if i < 5 else '')
+        new_line += '\n'
+        print(f"Новая строка: {new_line.strip()}")
+        
+        if 'lucky-numbers.ru' in ''.join(lines):
+            lines.insert(-1, new_line)
+        else:
+            lines.append(new_line)
+        
         with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
-            f.write("Номер тиража,Дата,Шары\n")
-    
-    with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
-        lines = f.readlines()
-    
-    max_num = 0
-    for line in lines:
-        if line.strip() and not line.startswith('lucky') and not line.startswith('Номер'):
-            match = re.match(r'(\d+)', line.strip())
-            if match:
-                num = int(match.group(1))
-                if num > max_num:
-                    max_num = num
-    
-    new_num = max_num + 1
-    now = datetime.now()
-    new_line = f'{new_num},{now.strftime("%d.%m.%y")}, {now.strftime("%H:%M")}, '
-    for i, n in enumerate(numbers):
-        new_line += str(n) + (', +' if i < 5 else '')
-    new_line += '\n'
-    
-    if 'lucky-numbers.ru' in ''.join(lines):
-        lines.insert(-1, new_line)
-    else:
-        lines.append(new_line)
-    
-    with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
-        f.writelines(lines)
-    
-    return new_num
+            f.writelines(lines)
+        print(f"✅ Тираж {new_num} успешно сохранён в файл")
+        
+        return new_num
+    except Exception as e:
+        print(f"❌ ОШИБКА: {e}")
+        traceback.print_exc()
+        raise
 
 # ===================== КОМАНДЫ БОТА =====================
 async def start(update: Update, context):
