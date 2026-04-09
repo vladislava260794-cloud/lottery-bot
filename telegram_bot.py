@@ -21,7 +21,7 @@ DATA_FILE = os.path.join(DATA_DIR, 'lottery.csv')
 TOKEN = "8235101337:AAE07TjdyK_KoJQRVbc9nuSgYyPxGt638S8"
 
 STATS_FILE = os.path.join(DATA_DIR, 'method_stats.json')
-MAX_DRAWS_FOR_LSTM = 300  # LSTM на 300 тиражей
+MAX_DRAWS_FOR_LSTM = 300
 WINDOW_FOR_YOUR_METHOD = 50
 
 # ===================== ПРОВЕРКА И НОРМАЛИЗАЦИЯ ФАЙЛА =====================
@@ -36,7 +36,6 @@ def normalize_csv_format():
         return
     with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
         content = f.read()
-    # Нормализуем формат
     content = re.sub(r',\s*', ', ', content)
     content = re.sub(r',(\d)', r', \1', content)
     content = re.sub(r'  ', ' ', content)
@@ -290,6 +289,7 @@ async def start(update: Update, context):
         "Команды:\n"
         "/predict - прогноз (5 методов + LSTM)\n"
         "/add - добавить тираж\n"
+        "/del - удалить последний тираж\n"
         "/history - последние 5 тиражей\n"
         "/stats - статистика методов\n"
         "/upload - загрузить файл lottery.csv\n\n"
@@ -413,6 +413,35 @@ async def add(update: Update, context):
     await update.message.reply_text("📝 Введите 6 чисел через пробел, например:\n`2 3 4 3 5 4`", parse_mode="Markdown")
     context.user_data['waiting'] = True
 
+async def delete_last(update: Update, context):
+    """Удаляет последний тираж из файла"""
+    if not os.path.exists(DATA_FILE):
+        await update.message.reply_text("❌ Файл с тиражами не найден")
+        return
+    
+    with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
+        lines = f.readlines()
+    
+    last_idx = -1
+    for i in range(len(lines) - 1, -1, -1):
+        line = lines[i].strip()
+        if line and not line.startswith('lucky') and not line.startswith('Номер'):
+            if re.match(r'^\d+', line):
+                last_idx = i
+                break
+    
+    if last_idx == -1:
+        await update.message.reply_text("❌ Нет тиражей для удаления")
+        return
+    
+    deleted_line = lines[last_idx].strip()
+    del lines[last_idx]
+    
+    with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
+        f.writelines(lines)
+    
+    await update.message.reply_text(f"✅ Удалён тираж:\n`{deleted_line}`", parse_mode="Markdown")
+
 async def stats(update: Update, context):
     stats = load_stats()
     
@@ -508,6 +537,7 @@ def main():
     app.add_handler(CommandHandler("predict", predict))
     app.add_handler(CommandHandler("history", history))
     app.add_handler(CommandHandler("add", add))
+    app.add_handler(CommandHandler("del", delete_last))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("upload", upload))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
