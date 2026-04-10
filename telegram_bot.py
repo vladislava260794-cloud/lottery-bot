@@ -329,7 +329,7 @@ async def start(update: Update, context):
         "/predict - прогноз (5 методов + LSTM)\n"
         "/add - добавить тираж\n"
         "/del - удалить последний тираж\n"
-        "/history - последние 5 тиражей\n"
+        "/history - первые 5 тиражей\n"
         "/stats - статистика методов\n"
         "/upload - загрузить файл lottery.csv\n"
         "/checkfile - показать содержимое файла\n\n"
@@ -390,18 +390,19 @@ async def predict(update: Update, context):
     await msg.edit_text(msg_text, parse_mode="Markdown")
 
 async def history(update: Update, context):
+    """Показывает ПЕРВЫЕ 5 тиражей (из начала файла)"""
     data = load_all_data()
     if len(data) == 0:
         await update.message.reply_text("❌ Нет данных")
         return
     
-    # Берём последние 5 тиражей
-    last_5 = data[-5:]
+    # Берём ПЕРВЫЕ 5 тиражей
+    first_5 = data[:5]
     total = len(data)
     
-    msg = f"📋 *Последние 5 тиражей из {total}:*\n\n"
-    for i, draw in enumerate(last_5):
-        num = total - 5 + i + 1
+    msg = f"📋 *Первые 5 тиражей из {total}:*\n\n"
+    for i, draw in enumerate(first_5):
+        num = i + 1
         msg += f"{num}: {draw} | сумма {sum(draw)}\n"
     
     await update.message.reply_text(msg, parse_mode="Markdown")
@@ -439,16 +440,16 @@ async def upload(update: Update, context):
     await update.message.reply_text("📁 Отправьте файл lottery.csv (как документ)")
 
 async def checkfile(update: Update, context):
-    """Показывает содержимое файла"""
+    """Показывает содержимое файла (первые 15 строк)"""
     if not os.path.exists(DATA_FILE):
         await update.message.reply_text("❌ Файл не найден")
         return
     with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
         lines = f.readlines()
-    # Покажем последние 15 строк
-    last_15 = lines[-15:]
-    msg = "📁 *Последние 15 строк файла:*\n\n"
-    for line in last_15:
+    # Покажем первые 15 строк
+    first_15 = lines[:15]
+    msg = "📁 *Первые 15 строк файла:*\n\n"
+    for line in first_15:
         msg += f"`{line.strip()}`\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -477,7 +478,6 @@ async def handle_message(update: Update, context):
                     old_logreg = logreg_method(old_data)
                     old_depth = depth_method(old_data)
                     old_markov = markov_method(old_data)
-                    # LSTM НЕ вызываем при добавлении
                     
                     stats = load_stats()
                     
