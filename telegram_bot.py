@@ -389,7 +389,6 @@ async def predict(update: Update, context):
     await msg.edit_text(msg_text, parse_mode="Markdown")
 
 async def history(update: Update, context):
-    """Исправленная история — номера идут по порядку"""
     data = load_all_data()
     if len(data) == 0:
         await update.message.reply_text("❌ Нет данных")
@@ -401,7 +400,6 @@ async def history(update: Update, context):
     
     msg = f"📋 *Последние 5 тиражей из {total}:*\n\n"
     for i, draw in enumerate(last_5):
-        # Номер тиража = общее количество - 5 + i + 1
         num = total - 5 + i + 1
         msg += f"{num}: {draw} | сумма {sum(draw)}\n"
     
@@ -456,8 +454,34 @@ async def handle_message(update: Update, context):
             nums = [int(x) for x in update.message.text.split()]
             if len(nums) == 6 and all(1 <= x <= 6 for x in nums):
                 await update.message.reply_text("🔄 Добавляю...")
+                
+                old_data = load_all_data()
+                if len(old_data) >= 10:
+                    old_variants = your_full_method(old_data)
+                    old_your = old_variants[0]
+                    old_logreg = logreg_method(old_data)
+                    old_depth = depth_method(old_data)
+                    old_markov = markov_method(old_data)
+                    # LSTM НЕ вызываем при добавлении (чтобы не зависало)
+                    
+                    stats = load_stats()
+                    
+                    for name, pred in [('your_method', old_your), ('logreg_method', old_logreg),
+                                       ('depth_method', old_depth), ('markov_method', old_markov)]:
+                        matches = len(set(pred) & set(nums))
+                        correct = matches >= 3
+                        stats[name]['total'] += 1
+                        if correct:
+                            stats[name]['correct'] += 1
+                        if stats[name]['total'] > 0:
+                            stats[name]['score'] = stats[name]['correct'] / stats[name]['total']
+                        else:
+                            stats[name]['score'] = 0
+                    save_stats(stats)
+                
                 new_num = add_draw_to_file(nums)
-                await update.message.reply_text(f"✅ Тираж {new_num} добавлен!\n{nums} | сумма {sum(nums)}")
+                new_num_str = f"{new_num:06d}"
+                await update.message.reply_text(f"✅ Тираж {new_num_str} добавлен!\n{nums} | сумма {sum(nums)}")
                 context.user_data['waiting'] = False
             else:
                 await update.message.reply_text("❌ Нужно 6 чисел от 1 до 6")
