@@ -389,30 +389,20 @@ async def predict(update: Update, context):
     await msg.edit_text(msg_text, parse_mode="Markdown")
 
 async def history(update: Update, context):
+    """Исправленная история — номера идут по порядку"""
     data = load_all_data()
     if len(data) == 0:
         await update.message.reply_text("❌ Нет данных")
         return
     
-    with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
-        lines = f.readlines()
-    
-    draws = []
-    data_idx = 0
-    for line in lines:
-        if line.strip() and not line.startswith('lucky') and not line.startswith('Номер'):
-            match = re.match(r'(\d+)', line.strip())
-            if match and data_idx < len(data):
-                num = int(match.group(1))
-                draws.append((num, data[data_idx]))
-                data_idx += 1
-    
-    draws.sort(key=lambda x: x[0], reverse=True)
-    last_5 = draws[:5]
-    total = len(draws)
+    # Берём последние 5 тиражей
+    last_5 = data[-5:]
+    total = len(data)
     
     msg = f"📋 *Последние 5 тиражей из {total}:*\n\n"
-    for num, draw in last_5:
+    for i, draw in enumerate(last_5):
+        # Номер тиража = общее количество - 5 + i + 1
+        num = total - 5 + i + 1
         msg += f"{num}: {draw} | сумма {sum(draw)}\n"
     
     await update.message.reply_text(msg, parse_mode="Markdown")
