@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import numpy as np
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -14,8 +15,36 @@ from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.optimizers import Adam
 
-# ===================== НАСТРОЙКА =====================
-DATA_FILE = 'lottery.csv'  # Файл в корне проекта
+# ===================== ЖЁСТКИЙ ПУТЬ =====================
+# Пробуем разные возможные пути
+possible_paths = [
+    '/app/data/lottery.csv',
+    '/app/lottery.csv',
+    'lottery.csv',
+    '/data/lottery.csv',
+]
+
+DATA_FILE = None
+for path in possible_paths:
+    try:
+        # Проверяем, можем ли мы писать в эту директорию
+        dirname = os.path.dirname(path)
+        if dirname and not os.path.exists(dirname):
+            os.makedirs(dirname, exist_ok=True)
+        # Пробуем создать тестовый файл
+        test_path = os.path.join(dirname, '.write_test') if dirname else '.write_test'
+        with open(test_path, 'w') as f:
+            f.write('test')
+        os.remove(test_path)
+        DATA_FILE = path
+        print(f"✅ Выбран путь: {DATA_FILE}")
+        break
+    except:
+        continue
+
+if DATA_FILE is None:
+    DATA_FILE = 'lottery.csv'
+    print(f"⚠️ Использую путь по умолчанию: {DATA_FILE}")
 
 TOKEN = "8235101337:AAE07TjdyK_KoJQRVbc9nuSgYyPxGt638S8"
 
@@ -23,27 +52,27 @@ STATS_FILE = 'method_stats.json'
 MAX_DRAWS_FOR_LSTM = 300
 WINDOW_FOR_YOUR_METHOD = 50
 
-# Глобальный кэш
-_data_cache = None
-
-# ===================== ПРОВЕРКА И НОРМАЛИЗАЦИЯ ФАЙЛА =====================
+# ===================== ПРОВЕРКА ФАЙЛА =====================
 def ensure_data_file():
     if not os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
             f.write("Номер тиража,Дата,Шары\n")
-        print("Создан пустой файл lottery.csv")
+            f.flush()
+            os.fsync(f.fileno())
+        print(f"Создан пустой файл: {DATA_FILE}")
 
 def normalize_csv_format():
     if not os.path.exists(DATA_FILE):
         return
     with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
         content = f.read()
-    # Нормализуем формат
     content = re.sub(r',\s*', ', ', content)
     content = re.sub(r',(\d)', r', \1', content)
     content = re.sub(r'  ', ' ', content)
     with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
         f.write(content)
+        f.flush()
+        os.fsync(f.fileno())
 
 ensure_data_file()
 normalize_csv_format()
@@ -66,12 +95,11 @@ def load_stats():
 def save_stats(stats):
     with open(STATS_FILE, 'w') as f:
         json.dump(stats, f)
+        f.flush()
+        os.fsync(f.fileno())
 
 def load_all_data():
-    global _data_cache
-    if _data_cache is not None:
-        return _data_cache
-    
+    """Загружает данные из файла — каждый раз заново, без кэша"""
     if not os.path.exists(DATA_FILE):
         return np.array([])
     normalize_csv_format()
@@ -90,8 +118,7 @@ def load_all_data():
                 i += 1
         else:
             break
-    _data_cache = np.array(data)
-    return _data_cache
+    return np.array(data)
 
 def load_data_for_lstm():
     data = load_all_data()
@@ -258,19 +285,14 @@ def markov_method(data):
 
 # ===================== ДОБАВЛЕНИЕ ТИРАЖА =====================
 def add_draw_to_file(numbers):
-    print("=== НАЧАЛО ДОБАВЛЕНИЯ ТИРАЖА ===")
+    print(f"=== ДОБАВЛЕНИЕ ТИРАЖА в {DATA_FILE} ===")
     print(f"Числа: {numbers}")
-    print(f"Путь к файлу: {DATA_FILE}")
     
     try:
-        if not os.path.exists(DATA_FILE):
-            print("Файл не существует, создаю новый...")
-            with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
-                f.write("Номер тиража,Дата,Шары\n")
+        ensure_data_file()
         
         with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
             lines = f.readlines()
-        print(f"Прочитано строк: {len(lines)}")
         
         max_num = 0
         for line in lines:
@@ -280,7 +302,6 @@ def add_draw_to_file(numbers):
                     num = int(match.group(1))
                     if num > max_num:
                         max_num = num
-        print(f"Максимальный номер тиража: {max_num}")
         
         new_num = max_num + 1
         now = datetime.now()
@@ -288,7 +309,6 @@ def add_draw_to_file(numbers):
         for i, n in enumerate(numbers):
             new_line += str(n) + (', +' if i < 5 else '')
         new_line += '\n'
-        print(f"Новая строка: {new_line.strip()}")
         
         if 'lucky-numbers.ru' in ''.join(lines):
             lines.insert(-1, new_line)
@@ -297,15 +317,19 @@ def add_draw_to_file(numbers):
         
         with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
             f.writelines(lines)
-        print(f"✅ Тираж {new_num} успешно сохранён в файл")
+            f.flush()
+            os.fsync(f.fileno())
         
-        # Очищаем кэш
-        global _data_cache
-        _data_cache = None
+        time.sleep(0.3)
+        
+        # Проверяем, что записалось
+        with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
+            check_lines = f.readlines()
+        print(f"После записи в файле {len(check_lines)} строк")
         
         return new_num
     except Exception as e:
-        print(f"❌ ОШИБКА: {e}")
+        print(f"ОШИБКА: {e}")
         traceback.print_exc()
         raise
 
@@ -314,92 +338,42 @@ async def start(update: Update, context):
     await update.message.reply_text(
         "🎰 *Лотерейный прогнозист* 🎰\n\n"
         "Команды:\n"
-        "/predict - прогноз (5 методов + LSTM)\n"
+        "/predict - прогноз\n"
         "/add - добавить тираж\n"
-        "/del - удалить последний тираж\n"
         "/history - последние 5 тиражей\n"
         "/stats - статистика методов\n"
-        "/upload - загрузить файл lottery.csv\n"
-        "/refresh - обновить данные\n\n"
-        f"📊 Твой метод использует последние {WINDOW_FOR_YOUR_METHOD} тиражей\n"
-        f"🧠 LSTM обучен на последних {MAX_DRAWS_FOR_LSTM} тиражах",
+        f"\n📁 Файл данных: {DATA_FILE}",
         parse_mode="Markdown"
     )
 
 async def predict(update: Update, context):
-    msg = await update.message.reply_text("🔄 Считаю прогнозы (LSTM может занять 20-30 секунд)...")
-    
-    all_data = load_all_data()
-    if len(all_data) < 10:
-        await msg.edit_text("❌ Мало данных (нужно минимум 10 тиражей)")
+    msg = await update.message.reply_text("🔄 Считаю прогнозы...")
+    data = load_all_data()
+    if len(data) < 10:
+        await msg.edit_text("❌ Мало данных")
         return
     
     lstm_data = load_data_for_lstm()
     stats = load_stats()
     
-    your_variants = your_full_method(all_data)
+    your_variants = your_full_method(data)
     your_main = format_numbers(your_variants[0])
     your_alt1 = format_numbers(your_variants[1]) if len(your_variants) > 1 else your_main
     your_alt2 = format_numbers(your_variants[2]) if len(your_variants) > 2 else your_main
     
-    logreg = format_numbers(logreg_method(all_data))
-    depth = format_numbers(depth_method(all_data))
-    markov = format_numbers(markov_method(all_data))
+    logreg = format_numbers(logreg_method(data))
+    depth = format_numbers(depth_method(data))
+    markov = format_numbers(markov_method(data))
     lstm = format_numbers(lstm_method(lstm_data))
     
-    best_method = None
-    best_score = -1
-    for name, stat in stats.items():
-        if stat['total'] > 0 and stat['score'] > best_score:
-            best_score = stat['score']
-            best_method = name
-    
-    msg_text = "🔮 *ПРОГНОЗЫ НА СЛЕДУЮЩИЙ ТИРАЖ* 🔮\n\n"
-    msg_text += "┌─────────────────────────────────┐\n"
-    msg_text += f"│ 👑 *ВАШ МЕТОД (основной)*     │\n"
-    msg_text += f"│    {your_main} │\n"
-    msg_text += f"│    🎯 Сумма: *{sum(your_main)}*              │\n"
-    msg_text += "├─────────────────────────────────┤\n"
-    msg_text += f"│ 📌 *ВАШ МЕТОД (вар.2)*        │\n"
-    msg_text += f"│    {your_alt1} │\n"
-    msg_text += f"│    🎯 Сумма: *{sum(your_alt1)}*              │\n"
-    msg_text += "├─────────────────────────────────┤\n"
-    msg_text += f"│ 📌 *ВАШ МЕТОД (вар.3)*        │\n"
-    msg_text += f"│    {your_alt2} │\n"
-    msg_text += f"│    🎯 Сумма: *{sum(your_alt2)}*              │\n"
-    msg_text += "├─────────────────────────────────┤\n"
-    msg_text += f"│ 📊 *ЛОГ.РЕГРЕССИЯ*            │\n"
-    msg_text += f"│    {logreg} │\n"
-    msg_text += f"│    🎯 Сумма: *{sum(logreg)}*              │\n"
-    msg_text += "├─────────────────────────────────┤\n"
-    msg_text += f"│ 📈 *ГЛУБИННЫЙ АНАЛИЗ*         │\n"
-    msg_text += f"│    {depth} │\n"
-    msg_text += f"│    🎯 Сумма: *{sum(depth)}*              │\n"
-    msg_text += "├─────────────────────────────────┤\n"
-    msg_text += f"│ 🔄 *МАРКОВСКАЯ ЦЕПЬ*          │\n"
-    msg_text += f"│    {markov} │\n"
-    msg_text += f"│    🎯 Сумма: *{sum(markov)}*              │\n"
-    msg_text += "├─────────────────────────────────┤\n"
-    msg_text += f"│ 🧠 *LSTM НЕЙРОСЕТЬ*           │\n"
-    msg_text += f"│    {lstm} │\n"
-    msg_text += f"│    🎯 Сумма: *{sum(lstm)}*              │\n"
-    msg_text += "└─────────────────────────────────┘\n"
-    
-    if best_method:
-        name_rus = {
-            'your_method': '👑 Ваш метод',
-            'logreg_method': '📊 Логистическая регрессия',
-            'depth_method': '📈 Глубинный анализ',
-            'markov_method': '🔄 Марковская цепь',
-            'lstm_method': '🧠 LSTM нейросеть'
-        }[best_method]
-        msg_text += f"\n⭐ *Рекомендуемый метод:* {name_rus} (точность {best_score:.0%})\n"
-    else:
-        msg_text += "\n📊 *Нет статистики. Добавьте тиражи через /add*"
-    
-    msg_text += f"\n📈 Всего в базе: {len(all_data)} тиражей"
-    msg_text += f"\n📊 Твой метод использует последние {WINDOW_FOR_YOUR_METHOD} тиражей"
-    msg_text += f"\n🧠 LSTM обучен на последних {MAX_DRAWS_FOR_LSTM} тиражах"
+    msg_text = "🔮 *ПРОГНОЗЫ:*\n\n"
+    msg_text += f"👑 Ваш метод: {your_main} | сумма {sum(your_main)}\n"
+    msg_text += f"📌 Ваш метод (вар.2): {your_alt1} | сумма {sum(your_alt1)}\n"
+    msg_text += f"📌 Ваш метод (вар.3): {your_alt2} | сумма {sum(your_alt2)}\n"
+    msg_text += f"📊 Лог.регрессия: {logreg} | сумма {sum(logreg)}\n"
+    msg_text += f"📈 Глубинный анализ: {depth} | сумма {sum(depth)}\n"
+    msg_text += f"🔄 Марковская цепь: {markov} | сумма {sum(markov)}\n"
+    msg_text += f"🧠 LSTM: {lstm} | сумма {sum(lstm)}\n"
     
     await msg.edit_text(msg_text, parse_mode="Markdown")
 
@@ -409,6 +383,7 @@ async def history(update: Update, context):
         await update.message.reply_text("❌ Нет данных")
         return
     
+    # Читаем номера из файла
     with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
         lines = f.readlines()
     
@@ -424,145 +399,58 @@ async def history(update: Update, context):
     
     draws.sort(key=lambda x: x[0], reverse=True)
     last_5 = draws[:5]
-    total = len(draws)
     
-    msg = f"📋 *Последние 5 тиражей из {total}:*\n\n"
+    msg = f"📋 *Последние 5 тиражей:*\n\n"
     for num, draw in last_5:
-        num_str = f"{num:06d}"
-        msg += f"┌─────────────────────────┐\n"
-        msg += f"│ Тираж *{num_str}*\n"
-        msg += f"│ {format_numbers(draw)}\n"
-        msg += f"│ 🎯 Сумма: *{sum(draw)}*\n"
-        msg += f"└─────────────────────────┘\n\n"
+        msg += f"{num}: {draw} | сумма {sum(draw)}\n"
     
+    msg += f"\n📁 Файл: {DATA_FILE}"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def add(update: Update, context):
-    await update.message.reply_text("📝 Введите 6 чисел через пробел, например:\n`2 3 4 3 5 4`", parse_mode="Markdown")
+    await update.message.reply_text("📝 Введите 6 чисел через пробел")
     context.user_data['waiting'] = True
-
-async def refresh(update: Update, context):
-    global _data_cache
-    _data_cache = None
-    load_all_data()
-    await update.message.reply_text("✅ Данные обновлены!")
-
-async def delete_last(update: Update, context):
-    if not os.path.exists(DATA_FILE):
-        await update.message.reply_text("❌ Файл с тиражами не найден")
-        return
-    
-    with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
-        lines = f.readlines()
-    
-    last_idx = -1
-    for i in range(len(lines) - 1, -1, -1):
-        line = lines[i].strip()
-        if line and not line.startswith('lucky') and not line.startswith('Номер'):
-            if re.match(r'^\d+', line):
-                last_idx = i
-                break
-    
-    if last_idx == -1:
-        await update.message.reply_text("❌ Нет тиражей для удаления")
-        return
-    
-    deleted_line = lines[last_idx].strip()
-    del lines[last_idx]
-    
-    with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
-        f.writelines(lines)
-    
-    global _data_cache
-    _data_cache = None
-    
-    await update.message.reply_text(f"✅ Удалён тираж:\n`{deleted_line}`", parse_mode="Markdown")
 
 async def stats(update: Update, context):
     stats = load_stats()
-    
     msg = "📊 *СТАТИСТИКА МЕТОДОВ:*\n\n"
-    msg += "┌─────────────────────────────────┐\n"
-    
     for name, stat in stats.items():
         name_rus = {
-            'your_method': '👑 Ваш метод',
-            'logreg_method': '📊 Лог.регрессия',
-            'depth_method': '📈 Глубинный анализ',
-            'markov_method': '🔄 Марковская цепь',
-            'lstm_method': '🧠 LSTM'
+            'your_method': 'Ваш метод',
+            'logreg_method': 'Лог.регрессия',
+            'depth_method': 'Глубинный анализ',
+            'markov_method': 'Марковская цепь',
+            'lstm_method': 'LSTM'
         }[name]
-        
-        total = stat['total']
-        correct = stat['correct']
-        
-        if total > 0:
-            accuracy = (correct / total) * 100
-            bar = "█" * int(accuracy / 5)
-            msg += f"│ {name_rus:<25} │\n"
-            msg += f"│    Точность: {accuracy:.0f}% {bar:<10} │\n"
-            msg += f"│    Угадано: {correct}/{total} тиражей          │\n"
+        if stat['total'] > 0:
+            acc = stat['score'] * 100
+            msg += f"{name_rus}: {acc:.0f}% ({stat['correct']}/{stat['total']})\n"
         else:
-            msg += f"│ {name_rus:<25} │\n"
-            msg += f"│    Нет данных              │\n"
-        msg += "├─────────────────────────────────┤\n"
-    
-    msg += "└─────────────────────────────────┘\n"
-    msg += "\n💡 *Совет:* Добавляйте тиражи через /add, чтобы накапливать статистику!"
-    
+            msg += f"{name_rus}: нет данных\n"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def upload(update: Update, context):
-    await update.message.reply_text("📁 Отправьте файл lottery.csv (как документ)")
+    await update.message.reply_text("📁 Отправьте файл lottery.csv")
 
 async def handle_document(update: Update, context):
-    document = update.message.document
-    if document.file_name == 'lottery.csv':
-        await update.message.reply_text("🔄 Загружаю файл...")
-        file = await document.get_file()
+    doc = update.message.document
+    if doc.file_name == 'lottery.csv':
+        await update.message.reply_text("🔄 Загружаю...")
+        file = await doc.get_file()
         await file.download_to_drive(DATA_FILE)
         normalize_csv_format()
-        global _data_cache
-        _data_cache = None
-        await update.message.reply_text(f"✅ Файл lottery.csv загружен и нормализован!\n📁 Путь: {DATA_FILE}")
+        await update.message.reply_text(f"✅ Загружен в {DATA_FILE}")
     else:
-        await update.message.reply_text(f"❌ Ожидался файл lottery.csv, получен {document.file_name}")
+        await update.message.reply_text("❌ Нужен lottery.csv")
 
 async def handle_message(update: Update, context):
     if context.user_data.get('waiting'):
         try:
             nums = [int(x) for x in update.message.text.split()]
             if len(nums) == 6 and all(1 <= x <= 6 for x in nums):
-                await update.message.reply_text("🔄 Добавляю тираж...")
-                
-                old_data = load_all_data()
-                if len(old_data) >= 10:
-                    old_variants = your_full_method(old_data)
-                    old_your = old_variants[0]
-                    old_logreg = logreg_method(old_data)
-                    old_depth = depth_method(old_data)
-                    old_markov = markov_method(old_data)
-                    old_lstm = lstm_method(load_data_for_lstm())
-                    
-                    stats = load_stats()
-                    
-                    for name, pred in [('your_method', old_your), ('logreg_method', old_logreg),
-                                       ('depth_method', old_depth), ('markov_method', old_markov),
-                                       ('lstm_method', old_lstm)]:
-                        matches = len(set(pred) & set(nums))
-                        correct = matches >= 3
-                        stats[name]['total'] += 1
-                        if correct:
-                            stats[name]['correct'] += 1
-                        if stats[name]['total'] > 0:
-                            stats[name]['score'] = stats[name]['correct'] / stats[name]['total']
-                        else:
-                            stats[name]['score'] = 0
-                    save_stats(stats)
-                
+                await update.message.reply_text("🔄 Добавляю...")
                 new_num = add_draw_to_file(nums)
-                new_num_str = f"{new_num:06d}"
-                await update.message.reply_text(f"✅ Тираж {new_num_str} добавлен!\n{nums} | сумма {sum(nums)}")
+                await update.message.reply_text(f"✅ Тираж {new_num} добавлен!\n{nums} | сумма {sum(nums)}")
                 context.user_data['waiting'] = False
             else:
                 await update.message.reply_text("❌ Нужно 6 чисел от 1 до 6")
@@ -575,15 +463,11 @@ def main():
     app.add_handler(CommandHandler("predict", predict))
     app.add_handler(CommandHandler("history", history))
     app.add_handler(CommandHandler("add", add))
-    app.add_handler(CommandHandler("refresh", refresh))
-    app.add_handler(CommandHandler("del", delete_last))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("upload", upload))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print(f"✅ Бот запущен!")
-    print(f"📊 Твой метод использует последние {WINDOW_FOR_YOUR_METHOD} тиражей")
-    print(f"🧠 LSTM обучен на последних {MAX_DRAWS_FOR_LSTM} тиражах")
     print(f"📁 Файл данных: {DATA_FILE}")
     app.run_polling()
 
