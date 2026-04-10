@@ -16,10 +16,16 @@ from tensorflow.keras.optimizers import Adam
 
 TOKEN = "8235101337:AAE07TjdyK_KoJQRVbc9nuSgYyPxGt638S8"
 
-STATS_FILE = 'method_stats.json'
+# ===================== НАСТРОЙКИ =====================
+DATA_DIR = '/app/data'  # Путь к Volume на Railway
+os.makedirs(DATA_DIR, exist_ok=True)
+STATS_FILE = os.path.join(DATA_DIR, 'method_stats.json')
+CSV_FILE = os.path.join(DATA_DIR, 'lottery.csv')
+
 WINDOW_FOR_YOUR_METHOD = 50
 MAX_DRAWS_FOR_LSTM = 300
 
+# ===================== ЗАГРУЗКА/СОХРАНЕНИЕ =====================
 def load_stats():
     if os.path.exists(STATS_FILE):
         with open(STATS_FILE, 'r') as f:
@@ -39,21 +45,25 @@ def save_stats(stats):
         json.dump(stats, f)
 
 def load_all_data():
-    with open('lottery.csv', 'r', encoding='utf-8-sig') as f:
-        text = f.read()
-    all_numbers = [int(n) for n in re.findall(r'\d+', text)]
+    """Надёжная загрузка всех тиражей из CSV"""
+    if not os.path.exists(CSV_FILE):
+        return np.array([])
+    
+    with open(CSV_FILE, 'r', encoding='utf-8-sig') as f:
+        lines = f.readlines()
+    
     data = []
-    i = 0
-    while i < len(all_numbers):
-        if i + 11 < len(all_numbers):
-            candidate = all_numbers[i+5:i+11]
-            if all(1 <= x <= 6 for x in candidate):
-                data.append(candidate)
-                i += 11
-            else:
-                i += 1
-        else:
-            break
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        if 'lucky-numbers' in line.lower():
+            continue
+        # Ищем 6 чисел от 1 до 6
+        numbers = re.findall(r'\b([1-6])\b', line)
+        if len(numbers) == 6:
+            data.append([int(n) for n in numbers])
+    
     return np.array(data)
 
 def load_data_for_lstm():
@@ -64,6 +74,61 @@ def load_data_for_lstm():
 
 def format_numbers(arr):
     return [int(x) for x in arr]
+
+def get_last_draw_number():
+    """Возвращает последний номер тиража из CSV"""
+    if not os.path.exists(CSV_FILE):
+        return 0
+    
+    with open(CSV_FILE, 'r', encoding='utf-8-sig') as f:
+        lines = f.readlines()
+    
+    last_num = 0
+    for line in lines:
+        match = re.match(r'(\d+)', line.strip())
+        if match:
+            last_num = max(last_num, int(match.group(1)))
+    return last_num
+
+def add_draw_to_file(numbers):
+    """Надёжное добавление тиража без перемешивания"""
+    new_num = get_last_draw_number() + 1
+    now = datetime.now()
+    
+    # Формируем строку без лишних символов
+    numbers_str = ','.join(str(n) for n in numbers)
+    new_line = f"{new_num:06d},{now.strftime('%d.%m.%y')},{now.strftime('%H:%M')},{numbers_str}\n"
+    
+    # Читаем существующий файл
+    if os.path.exists(CSV_FILE):
+        with open(CSV_FILE, 'r', encoding='utf-8-sig') as f:
+            lines = f.readlines()
+    else:
+        lines = []
+    
+    # Проверка на дубликат (последний тираж)
+    if lines:
+        last_line = lines[-1].strip()
+        last_numbers = re.findall(r'\b([1-6])\b', last_line)
+        if len(last_numbers) == 6 and [int(n) for n in last_numbers] == numbers:
+            return None  # Дубликат
+    
+    # Вставляем перед lucky-numbers.ru или в конец
+    lucky_index = -1
+    for i, line in enumerate(lines):
+        if 'lucky-numbers.ru' in line.lower():
+            lucky_index = i
+            break
+    
+    if lucky_index != -1:
+        lines.insert(lucky_index, new_line)
+    else:
+        lines.append(new_line)
+    
+    with open(CSV_FILE, 'w', encoding='utf-8-sig') as f:
+        f.writelines(lines)
+    
+    return new_num
 
 # ===================== LSTM =====================
 def lstm_method(data):
@@ -104,7 +169,7 @@ def lstm_method(data):
     pred = model.predict(X_last, verbose=0).reshape(6, 6)
     return [int(np.argmax(pred[i]) + 1) for i in range(6)]
 
-# ===================== ТВОЙ МЕТОД =====================
+# ===================== ВАШ МЕТОД =====================
 def your_full_method(data):
     if len(data) > WINDOW_FOR_YOUR_METHOD:
         data = data[-WINDOW_FOR_YOUR_METHOD:]
@@ -157,6 +222,7 @@ def your_full_method(data):
     
     return variants
 
+# ===================== ЛОГИСТИЧЕСКАЯ РЕГРЕССИЯ =====================
 def logreg_method(data):
     X_train = []
     y_train = []
@@ -189,6 +255,7 @@ def logreg_method(data):
         combo.append(pred)
     return combo
 
+# ===================== ГЛУБИННЫЙ АНАЛИЗ =====================
 def depth_method(data):
     combo = []
     for pos in range(6):
@@ -202,6 +269,7 @@ def depth_method(data):
         combo.append(max(depths, key=depths.get))
     return combo
 
+# ===================== МАРКОВСКАЯ ЦЕПЬ =====================
 def markov_method(data):
     combo = []
     for pos in range(6):
@@ -219,49 +287,20 @@ def markov_method(data):
         combo.append(next_num)
     return combo
 
-def add_draw_to_file(numbers):
-    with open('lottery.csv', 'r', encoding='utf-8-sig') as f:
-        lines = f.readlines()
-    
-    last_line = None
-    for line in reversed(lines):
-        if line.strip() and not line.startswith('lucky') and not line.startswith('﻿lucky'):
-            if re.match(r'^\d+', line.strip()):
-                last_line = line
-                break
-    
-    if last_line:
-        last_num = int(re.search(r'\d+', last_line).group())
-    else:
-        last_num = 0
-    
-    new_num = last_num + 1
-    now = datetime.now()
-    new_line = f'{new_num},{now.strftime("%d.%m.%y")}, {now.strftime("%H:%M")}, '
-    for i, n in enumerate(numbers):
-        new_line += str(n) + (', +' if i < 5 else '')
-    new_line += '\n'
-    
-    lines.insert(-1, new_line)
-    with open('lottery.csv', 'w', encoding='utf-8-sig') as f:
-        f.writelines(lines)
-    
-    return new_num
-
-# ===================== КОМАНДА ДЛЯ ИСПРАВЛЕНИЯ ДАННЫХ =====================
+# ===================== ИСПРАВЛЕНИЕ ДАННЫХ =====================
 async def fixdata(update: Update, context):
     """Принудительно записывает правильные данные в файл"""
-    correct_data = """004439,10.04.26, 17:00, 2,+,5,+,1,+,2,+,3,+,4
-004440,10.04.26, 18:00, 2,+,3,+,4,+,1,+,3,+,6
-004441,10.04.26, 19:00, 2,+,1,+,3,+,6,+,5,+,3
-004442,10.04.26, 20:00, 5,+,5,+,2,+,5,+,6,+,1
-004443,10.04.26, 21:00, 6,+,4,+,2,+,2,+,3,+,6
-004444,10.04.26, 22:00, 6,+,3,+,3,+,4,+,4,+,2"""
+    correct_data = """004439,10.04.26,17:00,2,5,1,2,3,4
+004440,10.04.26,18:00,2,3,4,1,3,6
+004441,10.04.26,19:00,2,1,3,6,5,3
+004442,10.04.26,20:00,5,5,2,5,6,1
+004443,10.04.26,21:00,6,4,2,2,3,6
+004444,10.04.26,22:00,6,3,3,4,4,2"""
     
-    try:
-        with open('lottery.csv', 'r', encoding='utf-8-sig') as f:
+    if os.path.exists(CSV_FILE):
+        with open(CSV_FILE, 'r', encoding='utf-8-sig') as f:
             lines = f.readlines()
-    except:
+    else:
         lines = []
     
     # Удаляем старые строки с 004439 по 004444
@@ -270,14 +309,14 @@ async def fixdata(update: Update, context):
         if not re.match(r'00443[9]|00444[0-4]', line):
             new_lines.append(line)
     
-    # Добавляем правильные данные перед lucky-numbers.ru или в конец
+    # Добавляем правильные данные
+    correct_lines = [line + '\n' for line in correct_data.split('\n')]
+    
     lucky_index = -1
     for i, line in enumerate(new_lines):
-        if 'lucky-numbers.ru' in line:
+        if 'lucky-numbers.ru' in line.lower():
             lucky_index = i
             break
-    
-    correct_lines = [line + '\n' for line in correct_data.split('\n')]
     
     if lucky_index != -1:
         for i, corr_line in enumerate(correct_lines):
@@ -285,12 +324,12 @@ async def fixdata(update: Update, context):
     else:
         new_lines.extend(correct_lines)
     
-    with open('lottery.csv', 'w', encoding='utf-8-sig') as f:
+    with open(CSV_FILE, 'w', encoding='utf-8-sig') as f:
         f.writelines(new_lines)
     
-    await update.message.reply_text("✅ Данные исправлены! Теперь проверь /history")
+    await update.message.reply_text("✅ Данные исправлены!")
 
-# ===================== ОСНОВНЫЕ КОМАНДЫ =====================
+# ===================== КОМАНДЫ БОТА =====================
 async def start(update: Update, context):
     await update.message.reply_text(
         "🎰 *Лотерейный прогнозист* 🎰\n\n"
@@ -388,22 +427,26 @@ async def history(update: Update, context):
         await update.message.reply_text("❌ Нет данных")
         return
     
-    with open('lottery.csv', 'r', encoding='utf-8-sig') as f:
-        lines = f.readlines()
-    
-    draws = []
-    data_idx = 0
-    for line in lines:
-        if line.strip() and not line.startswith('lucky') and not line.startswith('﻿lucky'):
-            match = re.match(r'(\d+)', line.strip())
+    # Получаем последние 5 с номерами тиражей
+    draws_with_nums = []
+    if os.path.exists(CSV_FILE):
+        with open(CSV_FILE, 'r', encoding='utf-8-sig') as f:
+            lines = f.readlines()
+        
+        data_idx = 0
+        for line in lines:
+            line = line.strip()
+            if not line or 'lucky-numbers' in line.lower():
+                continue
+            match = re.match(r'(\d+)', line)
             if match and data_idx < len(data):
-                num = int(match.group(1))
-                draws.append((num, data[data_idx]))
+                draw_num = int(match.group(1))
+                draws_with_nums.append((draw_num, data[data_idx]))
                 data_idx += 1
     
-    draws.sort(key=lambda x: x[0], reverse=True)
-    last_5 = draws[:5]
-    total = len(draws)
+    draws_with_nums.sort(key=lambda x: x[0], reverse=True)
+    last_5 = draws_with_nums[:5]
+    total = len(data)
     
     msg = f"📋 *Последние 5 тиражей из {total}:*\n\n"
     for num, draw in last_5:
@@ -487,8 +530,11 @@ async def handle_message(update: Update, context):
                     save_stats(stats)
                 
                 new_num = add_draw_to_file(nums)
-                new_num_str = f"{new_num:06d}"
-                await update.message.reply_text(f"✅ Тираж {new_num_str} добавлен!\n{nums} | сумма {sum(nums)}")
+                if new_num is None:
+                    await update.message.reply_text("⚠️ Этот тираж уже есть в базе!")
+                else:
+                    new_num_str = f"{new_num:06d}"
+                    await update.message.reply_text(f"✅ Тираж {new_num_str} добавлен!\n{nums} | сумма {sum(nums)}")
                 context.user_data['waiting'] = False
             else:
                 await update.message.reply_text("❌ Нужно 6 чисел от 1 до 6")
@@ -505,6 +551,7 @@ def main():
     app.add_handler(CommandHandler("fixdata", fixdata))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print(f"✅ Бот запущен!")
+    print(f"📁 Файлы хранятся в Volume: {DATA_DIR}")
     print(f"📊 Твой метод использует последние {WINDOW_FOR_YOUR_METHOD} тиражей")
     print(f"🧠 LSTM обучен на последних {MAX_DRAWS_FOR_LSTM} тиражах")
     app.run_polling()
