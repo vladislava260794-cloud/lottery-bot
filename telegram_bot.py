@@ -21,25 +21,25 @@ STATS_FILE = 'method_stats.json'
 MAX_DRAWS_FOR_LSTM = 300
 WINDOW_FOR_YOUR_METHOD = 50
 
-# ===================== ЗАГРУЗКА ДАННЫХ =====================
+# ===================== ИСПРАВЛЕННАЯ ЗАГРУЗКА ДАННЫХ =====================
 def load_all_data():
+    """Читает файл в формате: 004444,10.04.26, 22:00,6,+,3,+,3,+,4,+,4,+,2"""
     if not os.path.exists(DATA_FILE):
         return np.array([])
     with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
-        text = f.read()
-    all_numbers = [int(n) for n in re.findall(r'\d+', text)]
+        lines = f.readlines()
     data = []
-    i = 0
-    while i < len(all_numbers):
-        if i + 11 < len(all_numbers):
-            candidate = all_numbers[i+5:i+11]
-            if all(1 <= x <= 6 for x in candidate):
-                data.append(candidate)
-                i += 11
-            else:
-                i += 1
-        else:
-            break
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith('lucky'):
+            continue
+        # Находим все числа в строке
+        numbers = re.findall(r'\b\d+\b', line)
+        # Берём последние 6 чисел (это шары)
+        if len(numbers) >= 6:
+            balls = [int(n) for n in numbers[-6:]]
+            if all(1 <= x <= 6 for x in balls):
+                data.append(balls)
     return np.array(data)
 
 def load_data_for_lstm():
@@ -227,15 +227,18 @@ def markov_method(data):
 def add_draw_to_file(numbers):
     if not os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
-            f.write("Номер тиража,Дата,Шары\n")
+            f.write("")
     
+    # Читаем существующие строки
     with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
         lines = f.readlines()
     
+    # Определяем новый номер тиража
     max_num = 0
     for line in lines:
-        if line.strip() and not line.startswith('lucky') and not line.startswith('Номер'):
-            match = re.match(r'(\d+)', line.strip())
+        line = line.strip()
+        if line and not line.startswith('lucky'):
+            match = re.match(r'(\d+)', line)
             if match:
                 num = int(match.group(1))
                 if num > max_num:
@@ -248,10 +251,7 @@ def add_draw_to_file(numbers):
         new_line += str(n) + (', +' if i < 5 else '')
     new_line += '\n'
     
-    if 'lucky-numbers.ru' in ''.join(lines):
-        lines.insert(-1, new_line)
-    else:
-        lines.append(new_line)
+    lines.append(new_line)
     
     with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
         f.writelines(lines)
@@ -266,19 +266,11 @@ def delete_last_draw():
     with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
         lines = f.readlines()
     
-    last_idx = -1
-    for i in range(len(lines) - 1, -1, -1):
-        line = lines[i].strip()
-        if line and not line.startswith('lucky') and not line.startswith('Номер'):
-            if re.match(r'^\d+', line):
-                last_idx = i
-                break
+    if len(lines) == 0:
+        return False, "Нет тиражей"
     
-    if last_idx == -1:
-        return False, "Нет тиражей для удаления"
-    
-    deleted_line = lines[last_idx].strip()
-    del lines[last_idx]
+    deleted_line = lines[-1].strip()
+    lines = lines[:-1]
     
     with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
         f.writelines(lines)
@@ -290,7 +282,7 @@ async def start(update: Update, context):
     await update.message.reply_text(
         "🎰 *Лотерейный прогнозист* 🎰\n\n"
         "Команды:\n"
-        "/predict - прогноз\n"
+        "/predict - прогноз (5 методов)\n"
         "/add - добавить тираж\n"
         "/del - удалить последний тираж\n"
         "/history - последние 5 тиражей\n"
@@ -305,7 +297,7 @@ async def predict(update: Update, context):
     
     all_data = load_all_data()
     if len(all_data) < 10:
-        await msg.edit_text("❌ Мало данных")
+        await msg.edit_text("❌ Мало данных (нужно минимум 10 тиражей)")
         return
     
     lstm_data = load_data_for_lstm()
@@ -322,7 +314,7 @@ async def predict(update: Update, context):
     lstm = format_numbers(lstm_method(lstm_data))
     
     msg_text = "🔮 *ПРОГНОЗЫ:*\n\n"
-    msg_text += f"👑 ВАШ МЕТОД: {your_main} | сумма {sum(your_main)}\n"
+    msg_text += f"👑 ВАШ МЕТОД (осн): {your_main} | сумма {sum(your_main)}\n"
     msg_text += f"📌 ВАШ МЕТОД (вар.2): {your_alt1} | сумма {sum(your_alt1)}\n"
     msg_text += f"📌 ВАШ МЕТОД (вар.3): {your_alt2} | сумма {sum(your_alt2)}\n"
     msg_text += f"📊 ЛОГ.РЕГРЕССИЯ: {logreg} | сумма {sum(logreg)}\n"
@@ -341,15 +333,16 @@ async def history(update: Update, context):
     total = len(data)
     last_5 = data[-5:]
     
+    # Определяем начальный номер (если файл начинается с 004444, то номер = 4444 - 5 + i)
+    # Но проще показывать без номеров, только комбинации
     msg = f"📋 *Последние 5 тиражей из {total}:*\n\n"
     for i, draw in enumerate(last_5):
-        num = total - 5 + i + 1
-        msg += f"{num}: {draw} | сумма {sum(draw)}\n"
+        msg += f"{draw} | сумма {sum(draw)}\n"
     
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def add(update: Update, context):
-    await update.message.reply_text("📝 Введите 6 чисел через пробел")
+    await update.message.reply_text("📝 Введите 6 чисел через пробел, например:\n`2 3 4 3 5 4`", parse_mode="Markdown")
     context.user_data['waiting'] = True
 
 async def delete_last(update: Update, context):
@@ -378,7 +371,7 @@ async def stats(update: Update, context):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def upload(update: Update, context):
-    await update.message.reply_text("📁 Отправьте файл lottery.csv")
+    await update.message.reply_text("📁 Отправьте файл lottery.csv (как документ)")
 
 async def handle_document(update: Update, context):
     doc = update.message.document
@@ -386,9 +379,9 @@ async def handle_document(update: Update, context):
         await update.message.reply_text("🔄 Загружаю...")
         file = await doc.get_file()
         await file.download_to_drive(DATA_FILE)
-        await update.message.reply_text(f"✅ Загружен в {DATA_FILE}")
+        await update.message.reply_text(f"✅ Загружен в {DATA_FILE}\nТеперь проверьте /history")
     else:
-        await update.message.reply_text(f"❌ Ожидался lottery.csv")
+        await update.message.reply_text(f"❌ Ожидался lottery.csv, получен {doc.file_name}")
 
 async def handle_message(update: Update, context):
     if context.user_data.get('waiting'):
@@ -401,8 +394,8 @@ async def handle_message(update: Update, context):
                 context.user_data['waiting'] = False
             else:
                 await update.message.reply_text("❌ Нужно 6 чисел от 1 до 6")
-        except:
-            await update.message.reply_text("❌ Ошибка")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка: {e}")
 
 def main():
     app = Application.builder().token(TOKEN).build()
