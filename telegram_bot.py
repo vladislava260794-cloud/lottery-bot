@@ -16,43 +16,19 @@ from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.optimizers import Adam
 
 # ===================== ЖЁСТКИЙ ПУТЬ =====================
-# Пробуем разные возможные пути
-possible_paths = [
-    '/app/data/lottery.csv',
-    '/app/lottery.csv',
-    'lottery.csv',
-    '/data/lottery.csv',
-]
+DATA_FILE = '/app/data/lottery.csv'
+DATA_DIR = os.path.dirname(DATA_FILE)
 
-DATA_FILE = None
-for path in possible_paths:
-    try:
-        # Проверяем, можем ли мы писать в эту директорию
-        dirname = os.path.dirname(path)
-        if dirname and not os.path.exists(dirname):
-            os.makedirs(dirname, exist_ok=True)
-        # Пробуем создать тестовый файл
-        test_path = os.path.join(dirname, '.write_test') if dirname else '.write_test'
-        with open(test_path, 'w') as f:
-            f.write('test')
-        os.remove(test_path)
-        DATA_FILE = path
-        print(f"✅ Выбран путь: {DATA_FILE}")
-        break
-    except:
-        continue
-
-if DATA_FILE is None:
-    DATA_FILE = 'lottery.csv'
-    print(f"⚠️ Использую путь по умолчанию: {DATA_FILE}")
+os.makedirs(DATA_DIR, exist_ok=True)
 
 TOKEN = "8235101337:AAE07TjdyK_KoJQRVbc9nuSgYyPxGt638S8"
 
-STATS_FILE = 'method_stats.json'
+STATS_FILE = os.path.join(DATA_DIR, 'method_stats.json')
 MAX_DRAWS_FOR_LSTM = 300
 WINDOW_FOR_YOUR_METHOD = 50
 
-# ===================== ПРОВЕРКА ФАЙЛА =====================
+print(f"📁 Файл данных: {DATA_FILE}")
+
 def ensure_data_file():
     if not os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
@@ -77,7 +53,6 @@ def normalize_csv_format():
 ensure_data_file()
 normalize_csv_format()
 
-# ===================== ОСНОВНЫЕ ФУНКЦИИ =====================
 def load_stats():
     if os.path.exists(STATS_FILE):
         with open(STATS_FILE, 'r') as f:
@@ -99,7 +74,6 @@ def save_stats(stats):
         os.fsync(f.fileno())
 
 def load_all_data():
-    """Загружает данные из файла — каждый раз заново, без кэша"""
     if not os.path.exists(DATA_FILE):
         return np.array([])
     normalize_csv_format()
@@ -129,7 +103,6 @@ def load_data_for_lstm():
 def format_numbers(arr):
     return [int(x) for x in arr]
 
-# ===================== LSTM =====================
 def lstm_method(data):
     if len(data) < 50:
         return [3, 3, 3, 4, 4, 4]
@@ -168,7 +141,6 @@ def lstm_method(data):
     pred = model.predict(X_last, verbose=0).reshape(6, 6)
     return [int(np.argmax(pred[i]) + 1) for i in range(6)]
 
-# ===================== ТВОЙ МЕТОД =====================
 def your_full_method(data):
     if len(data) > WINDOW_FOR_YOUR_METHOD:
         data = data[-WINDOW_FOR_YOUR_METHOD:]
@@ -283,9 +255,9 @@ def markov_method(data):
         combo.append(next_num)
     return combo
 
-# ===================== ДОБАВЛЕНИЕ ТИРАЖА =====================
 def add_draw_to_file(numbers):
-    print(f"=== ДОБАВЛЕНИЕ ТИРАЖА в {DATA_FILE} ===")
+    print(f"=== ДОБАВЛЕНИЕ ТИРАЖА ===")
+    print(f"Путь: {DATA_FILE}")
     print(f"Числа: {numbers}")
     
     try:
@@ -320,9 +292,8 @@ def add_draw_to_file(numbers):
             f.flush()
             os.fsync(f.fileno())
         
-        time.sleep(0.3)
+        time.sleep(0.5)
         
-        # Проверяем, что записалось
         with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
             check_lines = f.readlines()
         print(f"После записи в файле {len(check_lines)} строк")
@@ -333,16 +304,46 @@ def add_draw_to_file(numbers):
         traceback.print_exc()
         raise
 
-# ===================== КОМАНДЫ БОТА =====================
+def delete_last_draw():
+    if not os.path.exists(DATA_FILE):
+        return False, "Файл не найден"
+    
+    with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
+        lines = f.readlines()
+    
+    last_idx = -1
+    for i in range(len(lines) - 1, -1, -1):
+        line = lines[i].strip()
+        if line and not line.startswith('lucky') and not line.startswith('Номер'):
+            if re.match(r'^\d+', line):
+                last_idx = i
+                break
+    
+    if last_idx == -1:
+        return False, "Нет тиражей для удаления"
+    
+    deleted_line = lines[last_idx].strip()
+    del lines[last_idx]
+    
+    with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
+        f.writelines(lines)
+        f.flush()
+        os.fsync(f.fileno())
+    
+    return True, deleted_line
+
 async def start(update: Update, context):
     await update.message.reply_text(
         "🎰 *Лотерейный прогнозист* 🎰\n\n"
         "Команды:\n"
         "/predict - прогноз\n"
         "/add - добавить тираж\n"
+        "/del - удалить последний тираж\n"
         "/history - последние 5 тиражей\n"
         "/stats - статистика методов\n"
-        f"\n📁 Файл данных: {DATA_FILE}",
+        "/upload - загрузить файл lottery.csv\n"
+        "/show_add_path - показать путь к файлу\n\n"
+        f"📁 Файл: {DATA_FILE}",
         parse_mode="Markdown"
     )
 
@@ -383,7 +384,6 @@ async def history(update: Update, context):
         await update.message.reply_text("❌ Нет данных")
         return
     
-    # Читаем номера из файла
     with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
         lines = f.readlines()
     
@@ -411,6 +411,13 @@ async def add(update: Update, context):
     await update.message.reply_text("📝 Введите 6 чисел через пробел")
     context.user_data['waiting'] = True
 
+async def delete_last(update: Update, context):
+    success, result = delete_last_draw()
+    if success:
+        await update.message.reply_text(f"✅ Удалён тираж:\n`{result}`", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(f"❌ {result}")
+
 async def stats(update: Update, context):
     stats = load_stats()
     msg = "📊 *СТАТИСТИКА МЕТОДОВ:*\n\n"
@@ -431,6 +438,17 @@ async def stats(update: Update, context):
 
 async def upload(update: Update, context):
     await update.message.reply_text("📁 Отправьте файл lottery.csv")
+
+async def show_add_path(update: Update, context):
+    exists = os.path.exists(DATA_FILE)
+    size = os.path.getsize(DATA_FILE) if exists else 0
+    await update.message.reply_text(
+        f"📁 *Путь к файлу:* `{DATA_FILE}`\n"
+        f"📁 *Файл существует:* {exists}\n"
+        f"📁 *Размер:* {size} байт\n"
+        f"📁 *Директория существует:* {os.path.exists(DATA_DIR)}",
+        parse_mode="Markdown"
+    )
 
 async def handle_document(update: Update, context):
     doc = update.message.document
@@ -463,8 +481,10 @@ def main():
     app.add_handler(CommandHandler("predict", predict))
     app.add_handler(CommandHandler("history", history))
     app.add_handler(CommandHandler("add", add))
+    app.add_handler(CommandHandler("del", delete_last))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("upload", upload))
+    app.add_handler(CommandHandler("show_add_path", show_add_path))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print(f"✅ Бот запущен!")
