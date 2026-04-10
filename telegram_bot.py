@@ -21,11 +21,11 @@ STATS_FILE = 'method_stats.json'
 MAX_DRAWS_FOR_LSTM = 300
 WINDOW_FOR_YOUR_METHOD = 50
 
-# ===================== ИСПРАВЛЕННАЯ ЗАГРУЗКА ДАННЫХ =====================
+# ===================== ЗАГРУЗКА ДАННЫХ (С НОМЕРАМИ) =====================
 def load_all_data():
-    """Читает файл в формате: 004444,10.04.26, 22:00,6,+,3,+,3,+,4,+,4,+,2"""
+    """Читает файл и возвращает список (номер, [шары])"""
     if not os.path.exists(DATA_FILE):
-        return np.array([])
+        return []
     with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
         lines = f.readlines()
     data = []
@@ -33,17 +33,27 @@ def load_all_data():
         line = line.strip()
         if not line or line.startswith('lucky'):
             continue
-        # Находим все числа в строке
+        # Ищем номер тиража (первые цифры)
+        match = re.match(r'(\d+)', line)
+        if not match:
+            continue
+        draw_num = int(match.group(1))
+        # Ищем все числа в строке
         numbers = re.findall(r'\b\d+\b', line)
         # Берём последние 6 чисел (это шары)
         if len(numbers) >= 6:
             balls = [int(n) for n in numbers[-6:]]
             if all(1 <= x <= 6 for x in balls):
-                data.append(balls)
-    return np.array(data)
+                data.append((draw_num, balls))
+    return data
+
+def load_balls_only():
+    """Возвращает только шары (для методов)"""
+    data = load_all_data()
+    return np.array([d[1] for d in data])
 
 def load_data_for_lstm():
-    data = load_all_data()
+    data = load_balls_only()
     if len(data) > MAX_DRAWS_FOR_LSTM:
         data = data[-MAX_DRAWS_FOR_LSTM:]
     return data
@@ -229,20 +239,17 @@ def add_draw_to_file(numbers):
         with open(DATA_FILE, 'w', encoding='utf-8-sig') as f:
             f.write("")
     
-    # Читаем существующие строки
     with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
         lines = f.readlines()
     
-    # Определяем новый номер тиража
+    # Находим максимальный номер тиража
     max_num = 0
     for line in lines:
-        line = line.strip()
-        if line and not line.startswith('lucky'):
-            match = re.match(r'(\d+)', line)
-            if match:
-                num = int(match.group(1))
-                if num > max_num:
-                    max_num = num
+        match = re.match(r'(\d+)', line)
+        if match:
+            num = int(match.group(1))
+            if num > max_num:
+                max_num = num
     
     new_num = max_num + 1
     now = datetime.now()
@@ -282,7 +289,7 @@ async def start(update: Update, context):
     await update.message.reply_text(
         "🎰 *Лотерейный прогнозист* 🎰\n\n"
         "Команды:\n"
-        "/predict - прогноз (5 методов)\n"
+        "/predict - прогноз\n"
         "/add - добавить тираж\n"
         "/del - удалить последний тираж\n"
         "/history - последние 5 тиражей\n"
@@ -295,7 +302,7 @@ async def start(update: Update, context):
 async def predict(update: Update, context):
     msg = await update.message.reply_text("🔄 Считаю прогнозы...")
     
-    all_data = load_all_data()
+    all_data = load_balls_only()
     if len(all_data) < 10:
         await msg.edit_text("❌ Мало данных (нужно минимум 10 тиражей)")
         return
@@ -325,7 +332,7 @@ async def predict(update: Update, context):
     await msg.edit_text(msg_text, parse_mode="Markdown")
 
 async def history(update: Update, context):
-    data = load_all_data()
+    data = load_all_data()  # возвращает список (номер, [шары])
     if len(data) == 0:
         await update.message.reply_text("❌ Нет данных")
         return
@@ -333,11 +340,9 @@ async def history(update: Update, context):
     total = len(data)
     last_5 = data[-5:]
     
-    # Определяем начальный номер (если файл начинается с 004444, то номер = 4444 - 5 + i)
-    # Но проще показывать без номеров, только комбинации
     msg = f"📋 *Последние 5 тиражей из {total}:*\n\n"
-    for i, draw in enumerate(last_5):
-        msg += f"{draw} | сумма {sum(draw)}\n"
+    for draw_num, balls in last_5:
+        msg += f"{draw_num}: {balls} | сумма {sum(balls)}\n"
     
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -379,7 +384,7 @@ async def handle_document(update: Update, context):
         await update.message.reply_text("🔄 Загружаю...")
         file = await doc.get_file()
         await file.download_to_drive(DATA_FILE)
-        await update.message.reply_text(f"✅ Загружен в {DATA_FILE}\nТеперь проверьте /history")
+        await update.message.reply_text(f"✅ Загружен в {DATA_FILE}")
     else:
         await update.message.reply_text(f"❌ Ожидался lottery.csv, получен {doc.file_name}")
 
