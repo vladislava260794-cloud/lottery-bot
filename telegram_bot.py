@@ -331,7 +331,8 @@ async def start(update: Update, context):
         "/del - удалить последний тираж\n"
         "/history - последние 5 тиражей\n"
         "/stats - статистика методов\n"
-        "/upload - загрузить файл lottery.csv\n\n"
+        "/upload - загрузить файл lottery.csv\n"
+        "/checkfile - показать содержимое файла\n\n"
         f"📁 Файл: {DATA_FILE}",
         parse_mode="Markdown"
     )
@@ -437,6 +438,20 @@ async def stats(update: Update, context):
 async def upload(update: Update, context):
     await update.message.reply_text("📁 Отправьте файл lottery.csv (как документ)")
 
+async def checkfile(update: Update, context):
+    """Показывает содержимое файла"""
+    if not os.path.exists(DATA_FILE):
+        await update.message.reply_text("❌ Файл не найден")
+        return
+    with open(DATA_FILE, 'r', encoding='utf-8-sig') as f:
+        lines = f.readlines()
+    # Покажем последние 15 строк
+    last_15 = lines[-15:]
+    msg = "📁 *Последние 15 строк файла:*\n\n"
+    for line in last_15:
+        msg += f"`{line.strip()}`\n"
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
 async def handle_document(update: Update, context):
     doc = update.message.document
     if doc.file_name == 'lottery.csv':
@@ -462,7 +477,7 @@ async def handle_message(update: Update, context):
                     old_logreg = logreg_method(old_data)
                     old_depth = depth_method(old_data)
                     old_markov = markov_method(old_data)
-                    # LSTM НЕ вызываем при добавлении (чтобы не зависало)
+                    # LSTM НЕ вызываем при добавлении
                     
                     stats = load_stats()
                     
@@ -497,6 +512,7 @@ def main():
     app.add_handler(CommandHandler("del", delete_last))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("upload", upload))
+    app.add_handler(CommandHandler("checkfile", checkfile))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print(f"✅ Бот запущен!")
